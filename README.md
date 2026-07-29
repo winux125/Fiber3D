@@ -22,11 +22,9 @@ Frontend-only прототип для проектирования оптово�
 - сохранение схемы в `localStorage`;
 - экспорт плана сети в JSON.
 
-## Запуск в WSL
+## Запуск
 
 ```bash
-cd ~/projects/fiber-village-3d
-nvm use
 npm install
 npm run dev -- --host 0.0.0.0
 ```
