@@ -2,6 +2,8 @@
   "name": "fiber-village-3d",
   "private": true,
   "version": "0.1.0",
+  "author": "Baubek Serikbay",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

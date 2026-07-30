@@ -17,6 +17,7 @@ interface VillageMapCallbacks {
   onNodePlacement: (x: number, z: number) => void;
   onCableSelected: (id: string) => void;
   onCableBranch: (id: string, x: number, z: number) => void;
+  onViewChanged: (x: number, z: number, zoom: number) => void;
 }
 
 export class VillageMap {
@@ -33,6 +34,9 @@ export class VillageMap {
   private visibleCableTypes = new Set<CableTypeId>(["adss-24", "drop-2", "duct-48"]);
   private visibleCableStatuses = new Set<CableStatus>(["active", "planned", "maintenance"]);
   private visibleNodeKinds = new Set<NodeKind>(["splice", "pole", "house", "hub"]);
+  private syncingFromScene = false;
+  private userControllingView = false;
+  private pointerDown: { x: number; y: number } | null = null;
 
   constructor(
     container: HTMLElement,
@@ -46,6 +50,8 @@ export class VillageMap {
       zoomControl: false,
       attributionControl: true,
       preferCanvas: true,
+      zoomSnap: 0.25,
+      zoomDelta: 0.5,
     });
     L.control.zoom({ position: "bottomright" }).addTo(this.map);
     this.streetLayer = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -66,12 +72,52 @@ export class VillageMap {
     this.applyBasemap();
     this.modelAreaLayer.addTo(this.map);
     this.networkLayer.addTo(this.map);
-    this.map.on("click", ({ latlng }) => {
-      if (this.mode !== "add-node") return;
-      const point = this.fromLatLng(latlng);
-      this.callbacks.onNodePlacement(point.x, point.z);
+    this.map.on("movestart", () => {
+      if (!this.syncingFromScene) this.userControllingView = true;
     });
+    this.map.on("moveend", () => {
+      window.requestAnimationFrame(() => {
+        this.userControllingView = false;
+      });
+    });
+    this.map.on("move", () => {
+      if (this.syncingFromScene) return;
+      const point = this.fromLatLng(this.map.getCenter());
+      this.callbacks.onViewChanged(point.x, point.z, this.map.getZoom());
+    });
+    container.addEventListener("pointerdown", this.handlePointerDown, true);
+    container.addEventListener("pointerup", this.handlePointerUp, true);
+    container.addEventListener("pointercancel", this.handlePointerCancel, true);
     this.render();
+  }
+
+  setViewFromScene(
+    x: number,
+    z: number,
+    distance: number,
+    _headingRad: number,
+  ): void {
+    const center = this.toLatLng(x, z);
+    // Keep the OpenStreetMap surface stable while the user places or connects
+    // network objects. Camera fly animations would otherwise move Leaflet
+    // between pointerdown and click and Leaflet would correctly cancel the click.
+    if (this.mode !== "explore" || this.userControllingView) return;
+
+    const zoom = Math.max(
+      this.map.getMinZoom(),
+      Math.min(
+        this.map.getMaxZoom(),
+        20 - Math.log2(Math.max(distance, 1) / 20),
+      ),
+    );
+    const centerShift = this.map.distance(this.map.getCenter(), center);
+    if (centerShift < 0.12 && Math.abs(this.map.getZoom() - zoom) < 0.04) return;
+
+    this.syncingFromScene = true;
+    this.map.setView(center, zoom, { animate: false });
+    window.requestAnimationFrame(() => {
+      this.syncingFromScene = false;
+    });
   }
 
   setMode(mode: InteractionMode): void {
@@ -209,15 +255,6 @@ export class VillageMap {
           direction: "top",
         },
       );
-      line.on("click", (event) => {
-        L.DomEvent.stopPropagation(event.originalEvent);
-        if (this.mode === "connect") {
-          const local = this.fromLatLng(event.latlng);
-          this.callbacks.onCableBranch(cable.id, local.x, local.z);
-        } else {
-          this.callbacks.onCableSelected(cable.id);
-        }
-      });
       line.addTo(this.networkLayer);
     }
 
@@ -264,10 +301,6 @@ export class VillageMap {
         direction: "top",
         offset: [0, -4],
       });
-      marker.on("click", (event) => {
-        L.DomEvent.stopPropagation(event.originalEvent);
-        this.callbacks.onNodeSelected(node.id);
-      });
       marker.addTo(this.networkLayer);
       L.circleMarker(position, {
         radius: 2.2,
@@ -296,6 +329,116 @@ export class VillageMap {
     this.map.flyTo([lat, lon], 17, { duration: 0.75 });
   }
 
+  private handlePointerDown = (event: PointerEvent): void => {
+    if (event.button !== 0) return;
+    this.pointerDown = { x: event.clientX, y: event.clientY };
+  };
+
+  private handlePointerUp = (event: PointerEvent): void => {
+    const start = this.pointerDown;
+    this.pointerDown = null;
+    if (!start || event.button !== 0) return;
+    if (
+      Math.hypot(event.clientX - start.x, event.clientY - start.y) > 7 ||
+      (event.target as HTMLElement).closest(".leaflet-control")
+    ) {
+      return;
+    }
+
+    const rect = this.map.getContainer().getBoundingClientRect();
+    const screenPoint = L.point(event.clientX - rect.left, event.clientY - rect.top);
+    const latLng = this.map.containerPointToLatLng(screenPoint);
+    const local = this.fromLatLng(latLng);
+
+    if (this.mode === "add-node") {
+      this.callbacks.onNodePlacement(local.x, local.z);
+      return;
+    }
+
+    const nodeId = this.closestNodeAt(screenPoint, 18);
+    if (nodeId) {
+      this.callbacks.onNodeSelected(nodeId);
+      return;
+    }
+
+    const cableId = this.closestCableAt(screenPoint, 14);
+    if (!cableId) return;
+    if (this.mode === "connect") {
+      this.callbacks.onCableBranch(cableId, local.x, local.z);
+    } else {
+      this.callbacks.onCableSelected(cableId);
+    }
+  };
+
+  private handlePointerCancel = (): void => {
+    this.pointerDown = null;
+  };
+
+  private closestNodeAt(point: L.Point, maximumDistance: number): string | null {
+    let closestId: string | null = null;
+    let closestDistance = maximumDistance;
+    for (const node of this.store.state.nodes) {
+      if (node.virtual || !this.visibleNodeKinds.has(node.kind)) continue;
+      const markerPoint = this.map.latLngToContainerPoint(
+        this.toLatLng(node.position.x, node.position.z),
+      );
+      const distance = point.distanceTo(markerPoint);
+      if (distance <= closestDistance) {
+        closestDistance = distance;
+        closestId = node.id;
+      }
+    }
+    return closestId;
+  }
+
+  private closestCableAt(point: L.Point, maximumDistance: number): string | null {
+    const nodes = new Map(this.store.state.nodes.map((node) => [node.id, node]));
+    let closestId: string | null = null;
+    let closestDistance = maximumDistance;
+    for (const cable of this.store.state.cables) {
+      if (
+        !this.visibleCableTypes.has(cable.type) ||
+        !this.visibleCableStatuses.has(cable.status)
+      ) {
+        continue;
+      }
+      const from = nodes.get(cable.from);
+      const to = nodes.get(cable.to);
+      if (!from || !to) continue;
+      const start = this.map.latLngToContainerPoint(
+        this.toLatLng(from.position.x, from.position.z),
+      );
+      const end = this.map.latLngToContainerPoint(
+        this.toLatLng(to.position.x, to.position.z),
+      );
+      const distance = this.distanceToSegment(point, start, end);
+      if (distance <= closestDistance) {
+        closestDistance = distance;
+        closestId = cable.id;
+      }
+    }
+    return closestId;
+  }
+
+  private distanceToSegment(point: L.Point, start: L.Point, end: L.Point): number {
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const lengthSquared = dx * dx + dy * dy;
+    if (lengthSquared < 0.0001) return point.distanceTo(start);
+    const projection = Math.max(
+      0,
+      Math.min(
+        1,
+        ((point.x - start.x) * dx + (point.y - start.y) * dy) /
+          lengthSquared,
+      ),
+    );
+    return Math.hypot(
+      point.x - (start.x + dx * projection),
+      point.y - (start.y + dy * projection),
+    );
+  }
+
   private applyBasemap(): void {
     const active = this.basemap === "satellite" ? this.satelliteLayer : this.streetLayer;
     const inactive = this.basemap === "satellite" ? this.streetLayer : this.satelliteLayer;
@@ -304,7 +447,7 @@ export class VillageMap {
     this.map.getContainer().classList.toggle("is-satellite", this.basemap === "satellite");
   }
 
-  private toLatLng(xMeters: number, zMeters: number): L.LatLngExpression {
+  private toLatLng(xMeters: number, zMeters: number): L.LatLng {
     const { lat, lon, alt = 0 } = this.store.state.village;
     const geodetic = alignedLocalToGeodetic(
       xMeters,
@@ -312,7 +455,7 @@ export class VillageMap {
       { lat, lon, alt },
       this.store.state.mapAlignment,
     );
-    return [geodetic.lat, geodetic.lon];
+    return L.latLng(geodetic.lat, geodetic.lon);
   }
 
   private fromLatLng(latLng: L.LatLng): { x: number; z: number } {

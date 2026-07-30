@@ -170,10 +170,13 @@ app.innerHTML = `
         <div id="scene-host" class="scene-host"></div>
         <div class="scene-vignette"></div>
         <div class="north-indicator"><span>N</span><i></i></div>
-
-        <div class="interaction-hint" id="interaction-hint">
-          ${icons.cursor}
-          <span>Мышь — вращение · стрелки — перемещение · колесо — масштаб</span>
+        <div class="keyboard-legend" aria-label="Управление камерой с клавиатуры">
+          <span><kbd>WASD</kbd> движение</span>
+          <span><kbd>Q E</kbd> поворот</span>
+          <span><kbd>I K</kbd> наклон</span>
+          <span><kbd>R F</kbd> высота</span>
+          <span><kbd>+ −</kbd> масштаб</span>
+          <span><kbd>Shift</kbd> быстрее</span>
         </div>
 
         <div class="map-card">
@@ -299,14 +302,7 @@ app.innerHTML = `
         </div>
         <div class="route-list" id="route-list"></div>
 
-        <div class="capacity-card">
-          <div class="capacity-top">
-            <span>Резерв сети</span>
-            <strong>62%</strong>
-          </div>
-          <div class="capacity-track"><i></i></div>
-          <p>15 из 24 волокон свободны на магистрали</p>
-        </div>
+
       </aside>
     </main>
   </div>
@@ -357,7 +353,6 @@ const appShell = document.querySelector<HTMLElement>(".app-shell")!;
 const mapCard = document.querySelector<HTMLElement>(".map-card")!;
 const sceneHost = document.querySelector<HTMLElement>("#scene-host")!;
 const mapHost = document.querySelector<HTMLElement>("#map-host")!;
-const interactionHint = document.querySelector<HTMLElement>("#interaction-hint")!;
 const routeList = document.querySelector<HTMLElement>("#route-list")!;
 const modelInput = document.querySelector<HTMLInputElement>("#model-file")!;
 const loadingOverlay = document.querySelector<HTMLElement>("#loading-overlay")!;
@@ -390,11 +385,7 @@ function showToast(message: string): void {
   toastTimer = window.setTimeout(() => toast.classList.remove("is-visible"), 2600);
 }
 
-function setHint(message: string): void {
-  interactionHint.querySelector("span")!.textContent = message;
-  interactionHint.classList.remove("is-pulsing");
-  requestAnimationFrame(() => interactionHint.classList.add("is-pulsing"));
-}
+function setHint(_message: string): void {}
 
 function defaultNodeName(kind: NodeKind): string {
   const labels: Record<NodeKind, string> = {
@@ -442,6 +433,8 @@ function beginCableBranch(
   showToast("Ответвление начато с выбранного места кабеля");
 }
 
+let mapForSynchronization: InstanceType<typeof VillageMap> | null = null;
+
 const scene = new VillageScene(sceneHost, store, {
   onConnection(from, to) {
     const cable = store.addCable(from, to, selectedCableType);
@@ -457,6 +450,9 @@ const scene = new VillageScene(sceneHost, store, {
   onCableSelected: focusCableRoute,
   onCableBranch: beginCableBranch,
   onHint: setHint,
+  onViewChanged(x, z, distance, headingRad) {
+    mapForSynchronization?.setViewFromScene(x, z, distance, headingRad);
+  },
 });
 
 const villageMap = new VillageMap(mapHost, store, {
@@ -470,7 +466,11 @@ const villageMap = new VillageMap(mapHost, store, {
   onCableBranch(id, x, z) {
     beginCableBranch(id, { x, z });
   },
+  onViewChanged(x, z, zoom) {
+    scene.setViewFromMap(x, z, zoom);
+  },
 });
+mapForSynchronization = villageMap;
 
 function applyNetworkFilters(): void {
   scene.setVisibilityFilters(visibleCableTypes, visibleCableStatuses, visibleNodeKinds);
@@ -517,8 +517,8 @@ function setMode(mode: InteractionMode): void {
   document.querySelectorAll<HTMLElement>("[data-mode]").forEach((button) => {
     button.classList.toggle("is-active", button.dataset.mode === mode);
   });
-  scene.setMode(mode);
   villageMap.setMode(mode);
+  scene.setMode(mode);
 }
 
 document.querySelectorAll<HTMLButtonElement>("[data-placement]").forEach((button) => {
@@ -945,7 +945,7 @@ nodeForm.addEventListener("submit", (event) => {
   pendingNodePosition = null;
   nodeDialog.close();
   scene.focusNode(node.id);
-  setMode("connect");
+  setMode("add-node");
   showToast(`${node.name} добавлен`);
 });
 

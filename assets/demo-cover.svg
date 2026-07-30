@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
+  <title id="title">FiberPlan 3D — демонстрационное видео</title>
+  <desc id="description">Обложка видео с 3D-моделью, картой и кнопкой воспроизведения</desc>
+  <defs>
+    <linearGradient id="scene" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0b0f16"/>
+      <stop offset="1" stop-color="#162238"/>
+    </linearGradient>
+    <linearGradient id="map" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f4f4f4"/>
+      <stop offset="1" stop-color="#dce7f5"/>
+    </linearGradient>
+    <filter id="shadow" x="-40%" y="-40%" width="180%" height="180%">
+      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-color="#000" flood-opacity=".35"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="630" rx="20" fill="#161616"/>
+  <rect x="1" y="1" width="1198" height="628" rx="19" fill="none" stroke="#525252"/>
+  <rect x="0" y="0" width="1200" height="74" rx="20" fill="#0f62fe"/>
+  <rect y="54" width="1200" height="20" fill="#0f62fe"/>
+
+  <g fill="#fff" font-family="Arial, Helvetica, sans-serif">
+    <text x="40" y="46" font-size="28" font-weight="700">FiberPlan 3D</text>
+    <text x="1128" y="45" font-size="16" text-anchor="end" opacity=".82">FTTH network engineering</text>
+  </g>
+
+  <rect x="26" y="100" width="710" height="500" fill="url(#scene)" stroke="#393939"/>
+  <rect x="752" y="100" width="422" height="500" fill="url(#map)" stroke="#8d8d8d"/>
+
+  <g opacity=".9">
+    <path d="M70 498 222 358 350 420 504 248 694 372" fill="none" stroke="#78a9ff" stroke-width="9"/>
+    <path d="M80 540 240 428 390 500 548 370 700 450" fill="none" stroke="#42be65" stroke-width="6"/>
+    <g fill="#303b4f" stroke="#6f7f98" stroke-width="2">
+      <path d="m100 370 82-38 76 42-82 40z"/>
+      <path d="m270 308 98-46 92 48-98 48z"/>
+      <path d="m430 424 105-48 96 54-104 48z"/>
+      <path d="m170 510 86-40 80 44-86 40z"/>
+    </g>
+  </g>
+
+  <g fill="none" stroke="#a8b7cb" stroke-width="8" opacity=".72">
+    <path d="M778 182h364M778 276h364M778 370h364M778 464h364"/>
+    <path d="M842 126v444M946 126v444M1054 126v444"/>
+  </g>
+  <path d="M786 512 870 430 954 472 1048 326 1142 260" fill="none" stroke="#fff" stroke-width="14"/>
+  <path d="M786 512 870 430 954 472 1048 326 1142 260" fill="none" stroke="#0f62fe" stroke-width="8"/>
+  <g fill="#ff4ecd" stroke="#fff" stroke-width="4">
+    <circle cx="870" cy="430" r="13"/>
+    <circle cx="954" cy="472" r="13"/>
+    <circle cx="1048" cy="326" r="13"/>
+  </g>
+
+  <g filter="url(#shadow)">
+    <circle cx="600" cy="335" r="82" fill="#0f62fe" stroke="#fff" stroke-width="5"/>
+    <path d="m580 292 66 43-66 43z" fill="#fff"/>
+  </g>
+
+  <g font-family="Arial, Helvetica, sans-serif">
+    <rect x="58" y="120" width="188" height="42" fill="#161616" stroke="#525252"/>
+    <text x="76" y="147" fill="#fff" font-size="16" font-weight="700">3D-проектирование</text>
+    <rect x="780" y="120" width="156" height="42" fill="#fff" stroke="#8d8d8d"/>
+    <text x="798" y="147" fill="#161616" font-size="16" font-weight="700">Карта сети</text>
+    <text x="600" y="576" fill="#fff" font-size="19" font-weight="700" text-anchor="middle">Смотреть демонстрацию</text>
+  </g>
+</svg>

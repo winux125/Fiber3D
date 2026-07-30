@@ -434,7 +434,6 @@ svg {
 }
 
 .right-panel {
-  padding-bottom: 24px;
   border-left: 1px solid var(--layer-2);
 }
 
@@ -927,32 +926,41 @@ svg {
   will-change: transform;
 }
 
-.interaction-hint {
+.keyboard-legend {
   position: absolute;
-  bottom: 16px;
-  left: 50%;
+  top: 76px;
+  left: 16px;
+  z-index: 4;
   display: flex;
-  min-height: 44px;
+  max-width: min(620px, calc(100% - 368px));
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  padding: 8px 10px;
+  color: #c6c6c6;
+  background: rgba(22, 22, 22, 0.88);
+  border: 1px solid #393939;
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.keyboard-legend span {
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  max-width: calc(100% - 48px);
-  padding: 8px 14px;
-  color: #f4f4f4;
-  background: rgba(22, 22, 22, 0.94);
-  border: 1px solid #525252;
-  font-size: 12px;
-  transform: translateX(-50%);
+  gap: 5px;
+  white-space: nowrap;
 }
 
-.interaction-hint svg {
-  flex: 0 0 17px;
-  width: 17px;
-  height: 17px;
-  color: #78a9ff;
-}
-
-.interaction-hint.is-pulsing {
-  animation: hint-flash 420ms ease;
+.keyboard-legend kbd {
+  min-width: 24px;
+  padding: 2px 5px;
+  color: #ffffff;
+  background: #393939;
+  border: 1px solid #6f6f6f;
+  border-radius: 2px;
+  font-family: inherit;
+  font-size: 9px;
+  font-weight: 600;
+  text-align: center;
 }
 
 .map-card {
@@ -1273,7 +1281,7 @@ svg {
 
 .workspace[data-view="map"] .scene-status,
 .workspace[data-view="map"] .north-indicator,
-.workspace[data-view="map"] .interaction-hint {
+.workspace[data-view="map"] .keyboard-legend {
   display: none;
 }
 
@@ -1286,11 +1294,6 @@ svg {
   border-top: 0;
   border-right: 0;
   border-bottom: 0;
-}
-
-.workspace[data-view="split"] .interaction-hint {
-  left: 28%;
-  max-width: 48%;
 }
 
 .loading-overlay {
@@ -2245,14 +2248,6 @@ svg {
   .north-indicator {
     top: 12px;
     left: 12px;
-  }
-
-  .interaction-hint {
-    right: 12px;
-    bottom: 12px;
-    left: 12px;
-    max-width: none;
-    transform: none;
   }
 
   .tool-grid {

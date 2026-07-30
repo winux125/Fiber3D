@@ -24,6 +24,12 @@ interface SceneCallbacks {
   onCableSelected: (id: string) => void;
   onCableBranch: (id: string, position: Vector3Data) => void;
   onHint: (message: string) => void;
+  onViewChanged: (
+    x: number,
+    z: number,
+    distance: number,
+    headingRad: number,
+  ) => void;
 }
 
 interface FlowParticle {
@@ -31,6 +37,13 @@ interface FlowParticle {
   curve: THREE.Curve<THREE.Vector3>;
   speed: number;
   offset: number;
+}
+
+interface SceneViewState {
+  x: number;
+  z: number;
+  distance: number;
+  headingRad: number;
 }
 
 export interface ZipLoadResult {
@@ -63,6 +76,29 @@ const NODE_STATE_COLORS: Record<NodeState, number> = {
   planned: 0xf1c21b,
   warning: 0xfa4d56,
 };
+
+const CAMERA_CONTROL_CODES = new Set([
+  "ArrowUp",
+  "ArrowDown",
+  "ArrowLeft",
+  "ArrowRight",
+  "KeyW",
+  "KeyA",
+  "KeyS",
+  "KeyD",
+  "KeyQ",
+  "KeyE",
+  "KeyI",
+  "KeyK",
+  "KeyR",
+  "KeyF",
+  "Equal",
+  "Minus",
+  "NumpadAdd",
+  "NumpadSubtract",
+  "ShiftLeft",
+  "ShiftRight",
+]);
 
 function disposeObject(root: THREE.Object3D): void {
   root.traverse((object) => {
@@ -197,7 +233,7 @@ export class VillageScene {
   private readonly controls: OrbitControls;
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
-  private readonly clock = new THREE.Clock();
+  private readonly timer = new THREE.Timer();
   private readonly networkRoot = new THREE.Group();
   private readonly importedRoot = new THREE.Group();
   private readonly demoRoot = new THREE.Group();
@@ -219,6 +255,8 @@ export class VillageScene {
   private visible = true;
   private introStart = performance.now();
   private introActive = true;
+  private lastViewSyncAt = 0;
+  private lastSynchronizedView: SceneViewState | null = null;
 
   constructor(
     private readonly container: HTMLElement,
@@ -236,9 +274,10 @@ export class VillageScene {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.08;
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.domElement.className = "scene-canvas";
     container.append(this.renderer.domElement);
+    this.timer.connect(document);
 
     this.scene.background = new THREE.Color(0x101318);
     this.camera.position.set(190, 150, 205);
@@ -266,7 +305,6 @@ export class VillageScene {
     resizeObserver.observe(container);
     document.addEventListener("visibilitychange", () => {
       this.visible = !document.hidden;
-      if (this.visible) this.clock.getDelta();
     });
     this.animate();
   }
@@ -277,7 +315,7 @@ export class VillageScene {
     this.highlightNode(null);
     this.renderer.domElement.dataset.mode = mode;
     const hints: Record<InteractionMode, string> = {
-      explore: "Осмотр: мышь — вращение, стрелки — перемещение",
+      explore: "WASD/стрелки — движение · Q/E — поворот · R/F — высота",
       connect: "Выберите узел или любую точку существующего кабеля",
       "add-node": "Кликните по поверхности модели или по карте",
     };
@@ -350,6 +388,31 @@ export class VillageScene {
 
   positionFromMap(x: number, z: number): Vector3Data {
     return this.resolveNodePosition(x, z);
+  }
+
+  setViewFromMap(x: number, z: number, zoom: number): void {
+    this.introActive = false;
+    this.networkRoot.updateMatrixWorld(true);
+    const currentTargetLocal = this.networkRoot.worldToLocal(
+      this.controls.target.clone(),
+    );
+    currentTargetLocal.x = x;
+    currentTargetLocal.z = z;
+    const nextTarget = this.networkRoot.localToWorld(currentTargetLocal);
+    const translation = nextTarget.clone().sub(this.controls.target);
+    this.controls.target.copy(nextTarget);
+    this.camera.position.add(translation);
+
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    const desiredDistance = THREE.MathUtils.clamp(
+      20 * 2 ** (20 - zoom),
+      this.controls.minDistance,
+      this.controls.maxDistance,
+    );
+    if (offset.lengthSq() < 0.0001) offset.set(1, 0.72, 1);
+    offset.setLength(desiredDistance);
+    this.camera.position.copy(this.controls.target).add(offset);
+    this.lastSynchronizedView = null;
   }
 
   private surfaceHeightAt(x: number, z: number): number | null {
@@ -1038,9 +1101,11 @@ export class VillageScene {
     ) {
       return;
     }
-    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(event.key)) {
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    if (CAMERA_CONTROL_CODES.has(event.code)) {
       event.preventDefault();
-      this.pressedKeys.add(event.key);
+      this.introActive = false;
+      this.pressedKeys.add(event.code);
       return;
     }
     if (event.key === "Escape") {
@@ -1051,7 +1116,7 @@ export class VillageScene {
   };
 
   private handleKeyUp = (event: KeyboardEvent): void => {
-    this.pressedKeys.delete(event.key);
+    this.pressedKeys.delete(event.code);
   };
 
   private handleWindowBlur = (): void => {
@@ -1060,22 +1125,51 @@ export class VillageScene {
 
   private updateKeyboardMovement(delta: number): void {
     if (!this.pressedKeys.size) return;
+    const pressed = (...codes: string[]): boolean =>
+      codes.some((code) => this.pressedKeys.has(code));
+    const boost = pressed("ShiftLeft", "ShiftRight") ? 3 : 1;
+    const viewDistance = this.camera.position.distanceTo(this.controls.target);
+    const speed = THREE.MathUtils.clamp(viewDistance * 0.55, 16, 320) * boost;
     const forward = this.controls.target.clone().sub(this.camera.position);
     forward.y = 0;
     if (forward.lengthSq() < 0.0001) forward.set(0, 0, -1);
     forward.normalize();
     const right = forward.clone().cross(this.camera.up).normalize();
     const movement = new THREE.Vector3();
-    if (this.pressedKeys.has("ArrowUp")) movement.add(forward);
-    if (this.pressedKeys.has("ArrowDown")) movement.sub(forward);
-    if (this.pressedKeys.has("ArrowRight")) movement.add(right);
-    if (this.pressedKeys.has("ArrowLeft")) movement.sub(right);
-    if (!movement.lengthSq()) return;
-    const viewDistance = this.camera.position.distanceTo(this.controls.target);
-    const speed = THREE.MathUtils.clamp(viewDistance * 0.55, 16, 320);
-    movement.normalize().multiplyScalar(speed * delta);
-    this.camera.position.add(movement);
-    this.controls.target.add(movement);
+    if (pressed("ArrowUp", "KeyW")) movement.add(forward);
+    if (pressed("ArrowDown", "KeyS")) movement.sub(forward);
+    if (pressed("ArrowRight", "KeyD")) movement.add(right);
+    if (pressed("ArrowLeft", "KeyA")) movement.sub(right);
+    if (pressed("KeyR")) movement.y += 1;
+    if (pressed("KeyF")) movement.y -= 1;
+    if (movement.lengthSq()) {
+      movement.normalize().multiplyScalar(speed * delta);
+      this.camera.position.add(movement);
+      this.controls.target.add(movement);
+    }
+
+    const yaw = (pressed("KeyE") ? 1 : 0) - (pressed("KeyQ") ? 1 : 0);
+    const pitch = (pressed("KeyK") ? 1 : 0) - (pressed("KeyI") ? 1 : 0);
+    const zoom =
+      (pressed("Minus", "NumpadSubtract") ? 1 : 0) -
+      (pressed("Equal", "NumpadAdd") ? 1 : 0);
+    if (!yaw && !pitch && !zoom) return;
+
+    const offset = this.camera.position.clone().sub(this.controls.target);
+    const spherical = new THREE.Spherical().setFromVector3(offset);
+    spherical.theta += yaw * delta * 1.15 * boost;
+    spherical.phi = THREE.MathUtils.clamp(
+      spherical.phi + pitch * delta * 0.85 * boost,
+      0.08,
+      this.controls.maxPolarAngle,
+    );
+    spherical.radius = THREE.MathUtils.clamp(
+      spherical.radius * Math.exp(zoom * delta * 1.5),
+      this.controls.minDistance,
+      this.controls.maxDistance,
+    );
+    offset.setFromSpherical(spherical);
+    this.camera.position.copy(this.controls.target).add(offset);
   }
 
   private handleConnectionNode(nodeId: string): void {
@@ -1158,11 +1252,57 @@ export class VillageScene {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.65));
   }
 
-  private animate = (): void => {
+  private synchronizeView(now: number): void {
+    if (now - this.lastViewSyncAt < 70) return;
+    this.networkRoot.updateMatrixWorld(true);
+    const target = this.networkRoot.worldToLocal(this.controls.target.clone());
+    const camera = this.networkRoot.worldToLocal(this.camera.position.clone());
+    const direction = target.clone().sub(camera);
+    direction.y = 0;
+    const localHeading =
+      direction.lengthSq() > 0.0001
+        ? Math.atan2(direction.x, -direction.z)
+        : 0;
+    const headingRad =
+      localHeading +
+      THREE.MathUtils.degToRad(this.store.state.mapAlignment.rotationDeg);
+    const view: SceneViewState = {
+      x: target.x,
+      z: target.z,
+      distance: this.camera.position.distanceTo(this.controls.target),
+      headingRad,
+    };
+    const previous = this.lastSynchronizedView;
+    const headingDelta = previous
+      ? Math.atan2(
+          Math.sin(view.headingRad - previous.headingRad),
+          Math.cos(view.headingRad - previous.headingRad),
+        )
+      : Number.POSITIVE_INFINITY;
+    if (
+      previous &&
+      Math.hypot(view.x - previous.x, view.z - previous.z) < 0.08 &&
+      Math.abs(view.distance - previous.distance) < 0.12 &&
+      Math.abs(headingDelta) < 0.002
+    ) {
+      return;
+    }
+    this.lastViewSyncAt = now;
+    this.lastSynchronizedView = view;
+    this.callbacks.onViewChanged(
+      view.x,
+      view.z,
+      view.distance,
+      view.headingRad,
+    );
+  }
+
+  private animate = (now = performance.now()): void => {
     requestAnimationFrame(this.animate);
     if (!this.visible) return;
-    const delta = Math.min(this.clock.getDelta(), 0.05);
-    const elapsed = this.clock.elapsedTime;
+    this.timer.update(now);
+    const delta = Math.min(this.timer.getDelta(), 0.05);
+    const elapsed = this.timer.getElapsed();
 
     if (this.introActive) {
       const progress = Math.min(1, (performance.now() - this.introStart) / 1600);
@@ -1199,6 +1339,7 @@ export class VillageScene {
       }
     }
     this.controls.update();
+    this.synchronizeView(performance.now());
     this.renderer.render(this.scene, this.camera);
   };
 }
